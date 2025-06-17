@@ -1,0 +1,328 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
+                            f1_score, roc_auc_score, confusion_matrix, 
+                            classification_report, roc_curve, auc)
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.tree import DecisionTreeClassifier
+import joblib
+import pickle
+
+# Настройка отображения
+pd.set_option('display.max_columns', None)
+plt.style.use('ggplot')
+%matplotlib inline
+
+# Загрузка данных
+data = pd.read_csv('C:\\Users\\Пользователь\\Downloads\\SalaryC.csv')
+
+# Первый взгляд на данные
+print(f"Размер датасета: {data.shape}")
+print("\nПервые 5 строк:")
+display(data.head())
+print("\nИнформация о датасете:")
+display(data.info())
+print("\nПропущенные значения:")
+display(data.isna().sum())
+
+duplicates = data.duplicated()
+print(f"Найдено {duplicates.sum()} дубликатов")
+
+data = data.drop_duplicates()
+print(f"Количество дубликатов после удаления: {duplicates.sum()}")
+
+# Заполнение пропущенных значений (если есть)
+# Например, для числовых - медианой, для категориальных - модой
+for col in data.columns:
+    if data[col].isna().sum() > 0:
+        if data[col].dtype == 'object':
+            data[col].fillna(data[col].mode()[0], inplace=True)
+        else:
+            data[col].fillna(data[col].median(), inplace=True)
+
+# Проверка, что пропусков больше нет
+print("Пропущенные значения после обработки:")
+display(data.isna().sum())
+
+data = data.dropna() # если очень мнго пропусков
+
+from sklearn.preprocessing import LabelEncoder
+
+# Выбираем все нечисловые колонки
+cat_cols = data.select_dtypes(include=['object']).columns
+
+# Применяем LabelEncoder
+data[cat_cols] = data[cat_cols].apply(LabelEncoder().fit_transform)
+
+#визуализация признаков
+num_features = ['age', 'fnlwgt', 'education-num', 'marital-status', 'occupation', 'hours-per-week']
+data[num_features].hist(bins=20, figsize=(10,8))
+plt.show()
+
+#избавляемся от выбросов
+def remove_outliers(df, columns):
+    for col in columns:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        df = df[(df[col] >= lower_bound) & (df[col] <= upper_bound)]
+    return df
+
+data = remove_outliers(data, num_features)
+
+data[num_features].hist(bins=20, figsize=(10,8))
+plt.show()
+
+plt.figure(figsize=(8, 5))
+sns.countplot(x=y)
+plt.title('Распределение целевой переменной Salary')
+plt.show()
+
+print("Распределение классов:")
+print(y.value_counts(normalize=True))
+
+from imblearn.over_sampling import SMOTE
+
+X = data.drop('salary', axis=1)
+y = data['salary']
+
+smote = SMOTE(random_state=42)
+X_resampled, y_resampled = smote.fit_resample(X, y)
+
+plt.figure(figsize=(8, 5))
+sns.countplot(x=y_resampled)
+plt.title('Распределение целевой переменной Salary')
+plt.show()
+
+print("Распределение классов:")
+print(y_resampled.value_counts(normalize=True))
+
+#матрица корреляции
+data_corr = data.drop(['fnlwgt', 'race', 'native-country'], axis=1)
+
+# Построение тепловой карты корреляций
+plt.figure(figsize=(16, 12))
+sns.heatmap(data_corr.corr(), annot=True, cmap='coolwarm', fmt=".2f", linewidths=0.5)
+plt.title("Корреляционная матрица")
+plt.show()
+
+print("\nОписательная статистика:")
+display(data.describe(include='all'))
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X_resampled)
+
+from sklearn.decomposition import PCA
+
+pca = PCA()
+X_pca = pca.fit_transform(X_scaled)
+
+explained_variance = pca.explained_variance_ratio_
+culminative_variance = explained_variance.cumsum()
+
+n_components = (culminative_variance <= 0.95).sum() + 1
+print(f'Число выбранных компонент: {n_components}')
+
+pca = PCA(n_components=n_components)
+X_pca = pca.fit_transform(X_scaled)
+
+from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score, precision_score, f1_score
+from scipy.stats import loguniform, randint
+import optuna
+from optuna.samplers import TPESampler
+import joblib
+
+# Разделение данных
+X_train, X_test, y_train, y_test = train_test_split(X_pca, y_resampled, test_size=0.2, random_state=42)
+
+# Функция для оценки модели
+def evaluate_model(model, X_test, y_test):
+    y_pred = model.predict(X_test)
+    print(f"Accuracy: {accuracy_score(y_test, y_pred):.4f}")
+    print(f"F1: {f1_score(y_test, y_pred):.4f}")
+    print(f"Precision: {precision_score(y_test, y_pred):.4f}\n")
+
+# 1. Logistic Regression
+print("LogisticRegression:")
+base_lr = LogisticRegression()
+base_lr.fit(X_train, y_train)
+evaluate_model(base_lr, X_test, y_test)
+
+# GridSearchCV
+params_lr_grid = {'C': [0.1, 1, 10], 'penalty': ['l1', 'l2']}
+grid_lr = GridSearchCV(LogisticRegression(solver='liblinear'), params_lr_grid, cv=5)
+grid_lr.fit(X_train, y_train)
+
+# RandomizedSearchCV
+params_lr_random = {'C': loguniform(0.01, 100), 'penalty': ['l1', 'l2']}
+random_lr = RandomizedSearchCV(LogisticRegression(solver='liblinear'), params_lr_random, n_iter=20, cv=5, random_state=42)
+random_lr.fit(X_train, y_train)
+
+# Optuna
+def objective_lr(trial):
+    C = trial.suggest_float('C', 0.01, 100, log=True)
+    penalty = trial.suggest_categorical('penalty', ['l1', 'l2'])
+    
+    model = LogisticRegression(solver='liblinear', C=C, penalty=penalty)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    return f1_score(y_test, y_pred)
+
+study_lr = optuna.create_study(direction='maximize', sampler=TPESampler())
+study_lr.optimize(objective_lr, n_trials=20)
+best_lr = LogisticRegression(solver='liblinear', **study_lr.best_params)
+best_lr.fit(X_train, y_train)
+
+# 2. Random Forest
+print("\nRandomForestClassifier:")
+base_rf = RandomForestClassifier()
+base_rf.fit(X_train, y_train)
+evaluate_model(base_rf, X_test, y_test)
+
+# GridSearchCV
+params_rf_grid = {'n_estimators': [50, 100], 'max_depth': [5, 10]}
+grid_rf = GridSearchCV(RandomForestClassifier(), params_rf_grid, cv=5)
+grid_rf.fit(X_train, y_train)
+
+# RandomizedSearchCV
+params_rf_random = {
+    'n_estimators': randint(50, 200),
+    'max_depth': randint(3, 20),
+    'min_samples_split': randint(2, 10),
+    'min_samples_leaf': randint(1, 5)
+}
+random_rf = RandomizedSearchCV(RandomForestClassifier(), params_rf_random, n_iter=20, cv=5, random_state=42)
+random_rf.fit(X_train, y_train)
+
+# Optuna
+def objective_rf(trial):
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 50, 200),
+        'max_depth': trial.suggest_int('max_depth', 3, 20),
+        'min_samples_split': trial.suggest_int('min_samples_split', 2, 10),
+        'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 5),
+        'bootstrap': trial.suggest_categorical('bootstrap', [True, False])
+    }
+    
+    model = RandomForestClassifier(**params)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    return f1_score(y_test, y_pred)
+
+study_rf = optuna.create_study(direction='maximize', sampler=TPESampler())
+study_rf.optimize(objective_rf, n_trials=20)
+best_rf = RandomForestClassifier(**study_rf.best_params)
+best_rf.fit(X_train, y_train)
+
+# 3. XGBoost
+print("\nXGBClassifier:")
+base_xgb = XGBClassifier()
+base_xgb.fit(X_train, y_train)
+evaluate_model(base_xgb, X_test, y_test)
+
+# GridSearchCV
+params_xgb_grid = {'n_estimators': [50, 100], 'learning_rate': [0.1, 0.01]}
+grid_xgb = GridSearchCV(XGBClassifier(), params_xgb_grid, cv=5)
+grid_xgb.fit(X_train, y_train)
+
+# RandomizedSearchCV
+params_xgb_random = {
+    'n_estimators': randint(50, 200),
+    'learning_rate': loguniform(0.001, 0.1),
+    'max_depth': randint(3, 10),
+    'subsample': [0.6, 0.7, 0.8, 0.9, 1.0],
+    'colsample_bytree': [0.6, 0.7, 0.8, 0.9, 1.0]
+}
+random_xgb = RandomizedSearchCV(XGBClassifier(), params_xgb_random, n_iter=20, cv=5, random_state=42)
+random_xgb.fit(X_train, y_train)
+
+# Optuna
+def objective_xgb(trial):
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 50, 200),
+        'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.1, log=True),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+        'gamma': trial.suggest_float('gamma', 0, 5)
+    }
+    
+    model = XGBClassifier(**params)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    return f1_score(y_test, y_pred)
+
+study_xgb = optuna.create_study(direction='maximize', sampler=TPESampler())
+study_xgb.optimize(objective_xgb, n_trials=20)
+best_xgb = XGBClassifier(**study_xgb.best_params)
+best_xgb.fit(X_train, y_train)
+
+# Сравнение всех моделей
+models = {
+    'Logistic Regression (Grid)': grid_lr.best_estimator_,
+    'Logistic Regression (Random)': random_lr.best_estimator_,
+    'Logistic Regression (Optuna)': best_lr,
+    'Random Forest (Grid)': grid_rf.best_estimator_,
+    'Random Forest (Random)': random_rf.best_estimator_,
+    'Random Forest (Optuna)': best_rf,
+    'XGBoost (Grid)': grid_xgb.best_estimator_,
+    'XGBoost (Random)': random_xgb.best_estimator_,
+    'XGBoost (Optuna)': best_xgb
+}
+
+for name, model in models.items():
+    print(f'\n{name}:')
+    evaluate_model(model, X_test, y_test)
+
+# Сохранение лучшей модели
+best_model = max(models.items(), key=lambda x: f1_score(y_test, x[1].predict(X_test)))
+joblib.dump(best_model[1], 'best_model.pkl')
+
+print(f"\nЛучшая модель: {best_model[0]}")
+
+# Загрузка и тестирование модели
+loaded_model = joblib.load('best_model.pkl')
+sample = X_pca[0:1]
+print(f'Предсказание: {loaded_model.predict(sample)}')
+
+'''
+почему именно эти модели
+1. Logistic Regression (Логистическая регрессия)
+Почему выбрана:
+
+Базовая линейная модель, идеальна для бинарной классификации.
+
+Быстрая, интерпретируемая, показывает, как признаки влияют на результат.
+2. Random Forest (Случайный лес)
+Почему выбрана:
+
+Ансамблевая модель на основе деревьев решений.
+
+Устойчива к переобучению, работает с нелинейными зависимостями.
+
+Автоматически выбирает важные признаки.
+3. XGBoost (Градиентный бустинг)
+Почему выбран:
+
+Один из самых мощных алгоритмов для состязательных задач (например, Kaggle).
+
+Оптимизирует ошибку последовательно, учитывая предыдущие ошибки.
+
+Поддержка регуляризации, что снижает риск переобучения.
+'''
